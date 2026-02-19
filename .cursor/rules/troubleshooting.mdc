@@ -1,0 +1,36 @@
+---
+description: Troubleshooting & optimization – DB performance, memory (AgentPrompt) – loads when working on DB layer
+globs: ["**/repositories/**/*.js", "**/Library/Mysql/**/*.js", "**/Library/MongoDB/**/*.js", "**/*.sql"]
+alwaysApply: false
+priority: medium
+---
+
+# Troubleshooting & Optimization (AgentPrompt)
+
+Apply when diagnosing or optimizing database or memory behavior (repositories, Library DB modules, SQL).
+
+## Orbit Produced Wrong Architecture
+
+If Orbit's implementation diverged from developer standards (e.g. wrong service, wrong config source, wrong acknowledgment flow):
+
+1. **PR analysis:** Was a linked PR present? If yes, was it fetched and analyzed before implementation? If not, analyze it and align.
+2. **CDR trace:** For telecom/voicemail features – was CDR pipeline traced (Bifrost → CDR format → postcall)? Was the correct CDR consumer identified?
+3. **Config source trace:** For workflow actions – was WorkflowController and workflow schema traced? Where does config actually live (DB vs params)?
+4. **Schema verification:** Were user-provided field names verified against DB schema (e.g. callhistory)?
+5. **Architecture checklist:** Was "new microservice?" "delayed exchange?" "CDR format changes?" answered in TDD Blueprint?
+
+**Reference:** `docs/CSIQ-15063/ORBIT_VS_DEV_GAP_ANALYSIS.md`, `docs/CSIQ-15063/ORBIT_FIX_PLAN.md`
+
+## Database Performance Issues
+
+- **USE** the MCP server to analyze query performance.
+- **CHECK** index usage and suggest optimizations.
+- **IMPLEMENT** query result caching where appropriate.
+- **CONSIDER** database partitioning for large datasets.
+
+## Memory and Resource Optimization
+
+- **IMPLEMENT** lazy loading for large datasets.
+- **USE** cursor-based pagination (do not load full result sets into memory).
+- **OPTIMIZE** memory usage in bulk operations.
+- **IMPLEMENT** background job processing for heavy operations.

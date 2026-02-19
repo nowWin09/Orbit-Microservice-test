@@ -1,0 +1,379 @@
+---
+description: Performance optimization patterns and anti-patterns for Orbit implementations
+globs: ["service-*/**/*.js", "Library/**/*.js", "**/consumers/**/*.js"]
+alwaysApply: false
+priority: high
+---
+
+# Performance Patterns & Anti-Patterns
+
+## Parallel Processing (MANDATORY)
+
+**Rule:** When processing collections where operations are independent, **ALWAYS** use `Promise.all()` instead of sequential loops.
+
+### Anti-Pattern: Sequential Processing
+
+**❌ FORBIDDEN:**
+```javascript
+// BAD: Sequential processing - each iteration waits for previous
+for (const item of items) {
+    const result = await processItem(item);
+    await sendMessage(result);
+}
+```
+
+**Performance Impact:** If processing 10 items takes 100ms each, total time = 1000ms (10 × 100ms)
+
+### Pattern: Parallel Processing
+
+**✅ REQUIRED:**
+```javascript
+// GOOD: Parallel processing - all items processed concurrently
+const results = await Promise.all(
+    items.map(async (item) => {
+        const result = await processItem(item);
+        await sendMessage(result);
+        return { success: true, item };
+    })
+);
+
+const successful = results.filter(r => r.success);
+```
+
+**Performance Impact:** If processing 10 items takes 100ms each, total time ≈ 100ms (all run concurrently)
+
+### When to Use Parallel Processing
+
+**Use `Promise.all()` when:**
+- Processing arrays/collections of items
+- Operations are independent (no dependencies between items)
+- Each operation involves async I/O (DB queries, API calls, RabbitMQ messages)
+- Order of processing doesn't matter
+
+**Examples:**
+- Processing multiple recipients/agents
+- Batch DB queries
+- Sending multiple RabbitMQ messages
+- Fetching data for multiple entities
+
+**Use sequential processing when:**
+- Operations have dependencies (item N needs result from item N-1)
+- Order matters (must process in sequence)
+- Rate limiting required (e.g., API throttling)
+- Memory constraints (very large collections)
+
+### Implementation Pattern
+
+```javascript
+/**
+ * Process multiple recipients in parallel
+ * @param {Array} recipients - Array of recipient objects
+ * @returns {Promise<Array>} - Results array with success/failure for each
+ */
+async function processRecipientsInParallel(recipients) {
+    const results = await Promise.all(
+        recipients.map(async (recipient) => {
+            try {
+                // Independent operations for each recipient
+                const toNumber = await fetchToNumber(recipient);
+                const fromNumber = await fetchFromNumber(recipient);
+                
+                if (toNumber && fromNumber) {
+                    await sendMessage({ to: toNumber, from: fromNumber });
+                    return { success: true, recipient };
+                }
+                return { success: false, recipient, reason: 'missing_numbers' };
+            } catch (err) {
+                console.error(`Error processing recipient ${recipient.id}:`, err);
+                return { success: false, recipient, error: err.message };
+            }
+        })
+    );
+    
+    const successful = results.filter(r => r.success);
+    const failed = results.filter(r => !r.success);
+    
+    console.log(`Processed ${successful.length} of ${recipients.length} recipients`);
+    
+    return results;
+}
+```
+
+**Pre-Implementation Checklist:**
+- [ ] Identify loops processing collections
+- [ ] Verify operations are independent
+- [ ] Replace `for...of` with `Promise.all()` + `.map()`
+- [ ] Add error handling for individual items
+- [ ] Track success/failure for each item
+- [ ] Test with multiple items to verify parallel execution
+
+**Related:** CSIQ-15063 (Sequential processing identified as performance issue)
+
+---
+
+## DB Call Optimization (MANDATORY)
+
+**Rule:** Before making a DB call, check if the data is already available. Skip DB calls when data can be obtained without querying.
+
+### Anti-Pattern: Unnecessary DB Calls
+
+**❌ FORBIDDEN:**
+```javascript
+// BAD: Always queries DB, even when phone number is already available
+async function fetchToCallerId(calleeUuid, calleeType, callId, practiceId) {
+    if (calleeType === 'AGENT') {
+        const query = `SELECT number FROM agents WHERE uuid = '${calleeUuid}'`;
+        return await DB.execute(query);
+    } else if (calleeType === 'PHONE_NUMBER') {
+        // Still queries DB even though phone number is in payload!
+        const query = `SELECT number FROM phone_numbers WHERE uuid = '${calleeUuid}'`;
+        return await DB.execute(query);
+    }
+}
+```
+
+### Pattern: Conditional DB Calls
+
+**✅ REQUIRED:**
+```javascript
+/**
+ * Fetch phone number, skipping DB when data is already available
+ * @param {string} calleeUuid - UUID (optional for PHONE_NUMBER type)
+ * @param {string} calleeType - Type (AGENT, EXTERNAL_NUMBER, PHONE_NUMBER)
+ * @param {string} phoneNumber - Direct phone number (for PHONE_NUMBER type)
+ * @returns {Promise<string|null>} - Phone number or null
+ */
+async function fetchToCallerId(calleeUuid, calleeType, callId, practiceId, phoneNumber = null) {
+    // OPTIMIZATION: Skip DB for PHONE_NUMBER type when phone number is provided
+    if (calleeType === 'PHONE_NUMBER' && phoneNumber) {
+        console.log(`[Optimization] Using direct phone number (no DB call): ${phoneNumber}`);
+        return phoneNumber;
+    }
+    
+    // Only query DB when necessary
+    if (calleeType === 'AGENT') {
+        const query = `SELECT number FROM agents WHERE uuid = ? AND practice_id = ?`;
+        const result = await DB.insertExecute(query, [calleeUuid, practiceId]);
+        return result?.[0]?.number || null;
+    }
+    
+    // ... other types ...
+}
+```
+
+### Optimization Strategies
+
+**1. Use Direct Values When Available:**
+- Phone numbers in payload → use directly
+- IDs in context → use directly
+- Cached values → use cache first
+
+**2. Batch Queries:**
+- Instead of N queries for N items, use one query with `IN` clause
+- Example: `SELECT * FROM agents WHERE uuid IN (?, ?, ?)`
+
+**3. Projections:**
+- Only fetch fields you need (avoid `SELECT *`)
+- Use MongoDB projections to reduce data transfer
+
+**4. Caching:**
+- Cache frequently accessed, rarely changing data
+- Use Redis for hot data
+- Invalidate cache on updates
+
+### Implementation Pattern
+
+```javascript
+/**
+ * Optimized phone number fetching
+ */
+async function fetchToCallerId(calleeUuid, calleeType, callId, practiceId, phoneNumber = null) {
+    // Strategy 1: Use direct value if available
+    if (calleeType === 'PHONE_NUMBER' && phoneNumber) {
+        return phoneNumber; // No DB call
+    }
+    
+    // Strategy 2: Check cache first (if implemented)
+    const cacheKey = `phone:${calleeType}:${calleeUuid}:${practiceId}`;
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+        return cached; // No DB call
+    }
+    
+    // Strategy 3: Query DB only when necessary
+    const query = `SELECT number FROM ${getTableForType(calleeType)} WHERE uuid = ? AND practice_id = ?`;
+    const result = await DB.insertExecute(query, [calleeUuid, practiceId]);
+    const phoneNumber = result?.[0]?.number || null;
+    
+    // Cache result for future use
+    if (phoneNumber) {
+        await redis.setex(cacheKey, 3600, phoneNumber); // 1 hour TTL
+    }
+    
+    return phoneNumber;
+}
+```
+
+**Pre-Implementation Checklist:**
+- [ ] Identify DB calls in loops or frequent paths
+- [ ] Check if data is already available (payload, context, cache)
+- [ ] Add conditional logic to skip DB when data available
+- [ ] Use parameterized queries (see `db_rules.mdc`)
+- [ ] Consider caching for frequently accessed data
+- [ ] Test with and without direct values to verify optimization
+
+**Related:** CSIQ-15063 (Unnecessary DB calls identified as performance issue)
+
+---
+
+## RabbitMQ Requeue Protection (MANDATORY)
+
+**Rule:** For retry/requeue scenarios, **ALWAYS** implement requeue protection to prevent duplicate processing.
+
+### Anti-Pattern: No Requeue Protection
+
+**❌ FORBIDDEN:**
+```javascript
+// BAD: No tracking - duplicate processing on requeue
+async function processRetry(retryPayload) {
+    const { recipients } = retryPayload;
+    
+    for (const recipient of recipients) {
+        await sendMessage(recipient); // Duplicate if message requeued!
+    }
+}
+```
+
+### Pattern: Requeue Protection
+
+**✅ REQUIRED:**
+```javascript
+/**
+ * Process retry with requeue protection
+ */
+async function processRetry(retryPayload) {
+    const { recipients, triggeredRecipients = [] } = retryPayload;
+    
+    // Filter out already-triggered recipients
+    const recipientsToProcess = recipients.filter(recipient => {
+        const recipientId = recipient.uuid || `phone-${recipient.phoneNumber}`;
+        const alreadyTriggered = triggeredRecipients.includes(recipientId);
+        
+        if (alreadyTriggered) {
+            console.log(`[Requeue Protection] Skipping already-triggered recipient: ${recipientId}`);
+        }
+        
+        return !alreadyTriggered;
+    });
+    
+    if (recipientsToProcess.length === 0) {
+        console.log('[Requeue Protection] All recipients already processed');
+        return { success: true, skipped: true };
+    }
+    
+    // Track newly triggered recipients
+    const newTriggeredRecipients = [...triggeredRecipients];
+    
+    for (const recipient of recipientsToProcess) {
+        await sendMessage(recipient);
+        
+        // Track triggered recipient
+        const recipientId = recipient.uuid || `phone-${recipient.phoneNumber}`;
+        if (!newTriggeredRecipients.includes(recipientId)) {
+            newTriggeredRecipients.push(recipientId);
+        }
+    }
+    
+    // Include tracking in next retry payload
+    return {
+        success: true,
+        triggeredRecipients: newTriggeredRecipients
+    };
+}
+```
+
+### Implementation Pattern
+
+```javascript
+/**
+ * Schedule retry with requeue protection tracking
+ */
+async function scheduleRetry(parentCallId, retryConfig, recipients, attemptNumber, triggeredRecipients = []) {
+    const retryPayload = {
+        parentCallId,
+        attemptNumber,
+        retryConfig,
+        recipients,
+        triggeredRecipients, // Track already-processed recipients
+        eventType: 'VOICEMAIL_RETRY'
+    };
+    
+    // Send delayed message
+    await rabbitmqProducer.produceDelayedMessage(
+        exchange,
+        routingKey,
+        retryPayload,
+        delayMs
+    );
+}
+
+/**
+ * Process retry with protection
+ */
+async function processRetryAttempt(retryPayload) {
+    const { recipients, triggeredRecipients = [] } = retryPayload;
+    
+    // Filter already-triggered recipients
+    const recipientsToProcess = recipients.filter(r => {
+        const id = r.uuid || `phone-${r.phoneNumber}`;
+        return !triggeredRecipients.includes(id);
+    });
+    
+    // Process and track
+    const newTriggeredRecipients = [...triggeredRecipients];
+    
+    for (const recipient of recipientsToProcess) {
+        await processRecipient(recipient);
+        const id = recipient.uuid || `phone-${recipient.phoneNumber}`;
+        if (!newTriggeredRecipients.includes(id)) {
+            newTriggeredRecipients.push(id);
+        }
+    }
+    
+    // Schedule next retry with updated tracking
+    if (shouldScheduleNextRetry(retryPayload)) {
+        await scheduleRetry(
+            retryPayload.parentCallId,
+            retryPayload.retryConfig,
+            recipients,
+            retryPayload.attemptNumber + 1,
+            newTriggeredRecipients // Pass updated tracking
+        );
+    }
+}
+```
+
+**Pre-Implementation Checklist:**
+- [ ] Identify retry/requeue scenarios
+- [ ] Add `triggeredRecipients` or similar tracking array to payload
+- [ ] Filter already-processed items before processing
+- [ ] Track newly processed items
+- [ ] Pass tracking to next retry attempt
+- [ ] Test requeue scenario (NACK message) to verify no duplicates
+
+**Related:** CSIQ-15063 (Missing requeue protection identified as reliability issue)
+
+---
+
+## Performance Checklist
+
+Before implementing any feature that processes collections or makes DB calls:
+
+- [ ] **Parallel Processing:** Are operations independent? Use `Promise.all()` instead of sequential loops
+- [ ] **DB Optimization:** Can data be obtained without DB call? Skip DB when data available
+- [ ] **Batch Operations:** Can multiple queries be combined into one? Use `IN` clauses or batch APIs
+- [ ] **Caching:** Is data frequently accessed but rarely changed? Consider Redis caching
+- [ ] **Projections:** Are you fetching only needed fields? Use projections, avoid `SELECT *`
+- [ ] **Requeue Protection:** Does feature handle retries/requeues? Track processed items to prevent duplicates
+
+**Related:** CSIQ-15063 (Performance improvements identified in quality comparison)

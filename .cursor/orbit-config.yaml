@@ -1,0 +1,137 @@
+# Orbit AI Model Configuration (February 2026)
+# Optimization: Claude Opus 4.5 for Deep Reasoning
+#
+# ⚠️ IMPORTANT LIMITATION:
+# The Cursor Task tool currently only accepts "fast" as a model parameter.
+# All other tiers (deep-reasoning, balanced, code-specialized) will use
+# Cursor's default model (Sonnet 4.5) because the model parameter must be omitted.
+# 
+# This config file serves to:
+# 1. Document intended model usage for each stage
+# 2. Track estimated costs
+# 3. Prepare for future Cursor updates that may support more model options
+
+# ============================================================================
+# ACTIVE PROFILE
+# ============================================================================
+active_profile: complex_feature_development
+
+# ============================================================================
+# MODEL PROFILES
+# ============================================================================
+
+profiles:
+  # --------------------------------------------------------------------------
+  # COMPLEX FEATURE DEVELOPMENT (Opus-First Flow)
+  # --------------------------------------------------------------------------
+  complex_feature_development:
+    description: "Maximum architectural depth. Uses Opus 4.5 for logic/planning and Sonnet 4.5 for implementation speed."
+    
+    discovery_phase:
+      jira_context_analysis: balanced      # Context synthesis
+      schema_analyzer: fast                # Standard DB checks
+      discovery: deep-reasoning            # Use Opus for dependency mapping
+    
+    planning_phase:
+      risk_analyzer: deep-reasoning         # 🎯 Opus 4.5: Complex security & architecture
+      tdd_planner: deep-reasoning           # 🎯 Opus 4.5: Edge-case test planning
+      implementation_planner: deep-reasoning # 🎯 Opus 4.5: Critical architectural synthesis (MOST IMPORTANT)
+    
+    implementation_phase:
+      code_generation: code-specialized    # Claude 4.5 Sonnet
+      code_refactoring: code-specialized   
+    
+    review_phase:
+      code_reviewer: deep-reasoning        # 🎯 'Hostile' code audit by Opus 4.5
+      test_validator: balanced             
+      regression_detector: balanced        
+
+# ============================================================================
+# MODEL TIER DEFINITIONS (Cursor IDs)
+# ============================================================================
+
+model_tiers:
+  # Deep Reasoning: Opus 4.5 is the current 'SOTA' for logic accuracy
+  deep-reasoning:
+    primary: "claude-opus-4.6"                 # Cursor Model ID for Opus 4.5
+    fallback: "claude-opus-4.5"                # The newer, slightly more expensive version
+    description: "Highest architectural quality and logic depth"
+    cost_per_1k_tokens: 0.025                  # 2026 Pricing ($25/1M tokens)
+    speed: "slow"
+  
+  # Code-Specialized: Best for generating the actual syntax at high speed
+  code-specialized:
+    primary: "claude-sonnet-4.5"               # Massive coding performance, faster than Opus
+    fallback: "gpt-5.3-codex"                  
+    description: "Optimized for raw code generation and file edits"
+    cost_per_1k_tokens: 0.015
+    speed: "medium"
+  
+  # Balanced: Fast, reliable everyday intelligence
+  balanced:
+    primary: "claude-sonnet-4.5"               # Standard Sonnet for high reliability
+    fallback: "gemini-3-pro"                   # Massive context fallback
+    description: "Good balance of quality and cost"
+    cost_per_1k_tokens: 0.010
+    speed: "fast"
+  
+  # Fast: Cheap and efficient for simple tasks
+  fast:
+    primary: "claude-haiku-4.5"                
+    fallback: "gpt-5-mini"                     
+    description: "Fastest for simple parsing and schema checks"
+    cost_per_1k_tokens: 0.0005
+    speed: "instant"
+
+# ============================================================================
+# COST ESTIMATION (2026 Pricing)
+# ============================================================================
+estimated_costs:
+  complex_feature_development:
+    discovery_phase: 0.25
+    planning_phase: 3.00        # Heavy Opus 4.5 usage (3 subagents)
+    implementation_phase: 1.10  # Sonnet 4.5 usage
+    review_phase: 0.90
+    total: 5.25
+
+# ============================================================================
+# TEST MODE (Orbit Quality Validation)
+# ============================================================================
+test_mode:
+  enabled: true
+  
+  # Test branch configuration
+  test_branch_prefix: "test/orbit-validation-"
+  base_branch: "main"  # Branch to create test branch from
+  
+  # Output paths
+  developer_pr_path: "docs/{ticket_id}/developer_pr/"
+  orbit_output_path: "docs/{ticket_id}/orbit_generated/"
+  validation_report_path: "docs/{ticket_id}/orbit_validation_report.md"
+  
+  # Comparison settings
+  comparison_model: "deep-reasoning"  # Use Opus 4.5 for fair comparison
+  
+  # Quality metrics (all enabled)
+  metrics:
+    - code_quality        # Complexity, duplication, patterns, error handling
+    - test_coverage       # Line %, branch %, edge cases, error tests, E2E
+    - performance         # N+1 queries, indexes, caching, batching, pagination
+    - security            # Joi validation, HIPAA, auth, SQL injection, rate limiting
+    - architecture        # Deployment, rollback, error handling, cross-service, docs
+  
+  # PR fetching strategy
+  pr_fetch:
+    try_jira_mcp_first: true   # Try to extract PR link from Jira ticket
+    ask_user_if_not_found: true # Prompt user for PR link if not in Jira
+    
+  # Cleanup options
+  cleanup:
+    delete_test_branch_after: false  # Keep test branch for manual review
+    delete_reports_after: false      # Keep validation reports
+    
+  # Safety checks
+  safety:
+    require_clean_working_directory: true  # Prevent accidental data loss
+    confirm_feature_revert: true           # Ask before reverting feature
+    dry_run: false                         # Set true to simulate without changes

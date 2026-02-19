@@ -1,0 +1,96 @@
+---
+description: Multi-database architecture mandates, volume rule, tenant isolation, pre-query workflow, and DB-specific rules (source: DatabasePrompt)
+globs: ["**/*.sql", "**/models/**/*.js", "**/repositories/**/*.js", "**/Library/Mysql/**/*.js", "**/Library/MongoDB/**/*.js", "**/Library/Bigquery/**/*.js"]
+alwaysApply: false
+priority: critical
+---
+
+# Database Rules (DatabasePrompt Summary)
+
+## Core Philosophy
+
+Security & compliance first (PII, HIPAA, audit trails). Tenant isolation (`practice_id`) and input validation mandatory. **Bifrost/Twiml:** Use Bifrost architecture by default; if in doubt or inconsistent, ask the user which architecture applies. Right tool for the job (MariaDB vs MongoDB vs Redis vs BigQuery). Performance: API < 200ms, DB < 300ms. Avoid N+1; delegate sort/filter/pagination to the DB. Timestamps in a single timezone (e.g. UTC). Maintainability: logic in repositories, not scattered in services/controllers.
+
+## Pre-Query Workflow (Mandatory)
+
+Before writing or changing ANY query:
+
+1. **Connect & Identify** – Use DB MCP to identify the correct database. **Connection Failure Protocol:** If the MCP is unreachable or returns errors: **STOP immediately.** Do not attempt to guess the schema. Inform the user: "Database MCP is unavailable. I cannot verify the schema." **Wait:** Do not proceed with query writing until the user fixes the MCP or explicitly authorizes you to use *only* the codebase definitions (High Risk).
+2. **Analyze Existing State** – Fetch and analyze current schema, existing indexes, and data volumes; verify if existing indexes can be leveraged; never assume the structure.
+3. **Analyze Performance** – Retrieve data volumes and performance statistics; identify existing slow queries if relevant.
+4. **Propose & Impact** – For **every new or modified query**, provide a performance analysis including an **EXPLAIN** plan (MariaDB or MongoDB). For **every new index**, justify its creation based on **query frequency, data volume, and business criticality** and include the required documentation. Document each index with: Index for (purpose); Query pattern; Frequency; Performance impact. Example: `// Index for: Searching contacts by email within a practice (soft-delete aware). Query pattern: WHERE practice_id = ? AND email = ? AND is_deleted IS FALSE. Frequency: High. Performance: Reduces scan from 100K rows to ~1 row.`
+5. **Document & Await Approval** – Add documentation for each index; await user approval before proceeding.
+
+## Multi-Database Mandates
+
+- **MariaDB:** Core relational data, ACID, low-volume aggregate. Examples: User accounts, contacts, appointments, billing.
+- **MongoDB:** Flexible-schema, high-volume, denormalized reads. Examples: Audit logs, analytics, call logs.
+- **Redis:** Caching, sessions, queues, ephemeral state. **Cache what's expensive:** cache the *results* of expensive DB queries or complex computations. Key pattern `[module]:[entity]:[id]:[attribute]`. **TTL:** Never create a key without expiration; default TTL **24 hours** unless specified otherwise. **Data types:** Use **Hashes (HSET)** for objects; **Sets (SADD)** for lists of unique identifiers. Invalidate cache **after** source-of-truth commit.
+- **BigQuery:** Large-scale analytics only; NOT real-time. No `SELECT *`; partition/cluster; dry_run for cost. **Schema match:** Joi schema must **mirror the BigQuery table schema exactly** (types, required/nullable fields). **Data ingestion:** Favor **streaming inserts** for real-time data and **batch loads** for large, infrequent updates.
+
+## Volume Rule (Multi-Tenancy)
+
+For tenant-specific data, consider **total aggregated volume** across all tenants. If millions of records across thousands of tenants (e.g. Call Logs) → **MongoDB**. MariaDB for genuinely low-volume aggregate.
+
+## Tenant Isolation
+
+All queries scoped to authenticated tenant (`practice_id`). MariaDB: `practice_id` first in composite indexes. Never expose one practice’s data to another.
+
+## MariaDB Rules
+
+No `SELECT *`; explicit columns. No N+1; use JOINs or batched IN. All data access in Repository. Multi-write in transactions. **Indexes:** Identify all query patterns before implementation; query-pattern order (Equality, Sort, Range); `practice_id` first for multi-tenant; naming `idx_tablename_columns`. **Required index coverage:** Create indexes for **primary lookup keys (UUIDs, IDs), foreign keys, and fields used in soft-delete filtering (`is_deleted`)**. No indexes on low-cardinality booleans alone, no duplicates, no TEXT/BLOB (use FULLTEXT), avoid more than 5–6 columns.
+
+### SQL Injection Prevention (CRITICAL)
+
+**NEVER use string interpolation or template literals in SQL queries.** Always use parameterized queries with `DB.insertExecute(query, params)` or prepared statements.
+
+**❌ FORBIDDEN (SQL Injection Risk):**
+```javascript
+// BAD: String interpolation
+const query = `SELECT * FROM users WHERE uuid = '${userUuid}' AND practice_id = ${practiceId}`;
+const result = await DB.execute(query);
+
+// BAD: Template literal with variables
+const query = `SELECT number FROM agents WHERE uuid = '${calleeUuid}'`;
+const result = await DB.execute(query);
+```
+
+**✅ REQUIRED (Parameterized Queries):**
+```javascript
+// GOOD: Parameterized query
+const query = `SELECT * FROM users WHERE uuid = ? AND practice_id = ?`;
+const result = await DB.insertExecute(query, [userUuid, practiceId]);
+
+// GOOD: Parameterized query with named parameters (if supported)
+const query = `SELECT number FROM agents WHERE uuid = ? AND practice_id = ?`;
+const result = await DB.insertExecute(query, [calleeUuid, practiceId]);
+```
+
+**When `DB.execute()` is used (no parameters):**
+- Only use for static queries with no user input
+- If query needs dynamic values, **MUST** use `DB.insertExecute(query, params)` instead
+- If `DB.execute()` doesn't support parameters, **MUST** refactor to use `DB.insertExecute()` or create a helper that supports parameterized queries
+
+**Pre-Implementation Checklist:**
+- [ ] Identify all SQL queries that use variables
+- [ ] Replace `DB.execute()` with `DB.insertExecute(query, params)` for dynamic queries
+- [ ] Verify no string interpolation (`${variable}`) or concatenation (`+ variable +`) in queries
+- [ ] Test with malicious input (SQL injection attempts) to verify protection
+
+**Related:** CSIQ-15063 (SQL injection vulnerabilities identified in PR #2965)
+
+## MongoDB Rules
+
+**Schema design:** Favor embedding for read performance. **Avoid large arrays:** Documents have a 16MB limit; arrays must not grow indefinitely; if an array is expected to hold **more than 1000 elements**, propose a schema with a **separate collection and referencing**. **Denormalization:** Intelligently denormalize to avoid complex **`$lookup`** (join) operations in high-frequency queries. **Indexing:** Compound indexes – ESR (Equality, Sort, Range). **Covering indexes:** Include all fields a query needs (filtering and returning) to avoid reading from the document. **Text indexes:** For natural language search, use MongoDB **`text`** indexes. TTL indexes for ephemeral data. **Querying:** Use aggregation pipeline for complex reads; **projections are mandatory** – never return the full document when only a few fields are needed.
+
+## Universal Indexing Framework
+
+Index required if 2+ of: query >100/day, scan >10K rows without index, response >200ms, user-facing real-time. If 0–1 YES → do not add index.
+
+## State Management (When Feature Has State Transitions)
+
+No hardcoded status strings; use **Constants.js** (e.g. STATUS.PENDING). No Find-Modify-Save for high-concurrency state; use atomic DB ops or repository methods. Idempotency: duplicate state-change events must not corrupt state.
+
+## Repository / Data Access Layer
+
+**NEVER** write inline queries for core entities in services/controllers (e.g. `Practice.findOne(...)` or `Agent.find(...)` inside service/controller). **ALWAYS** use a dedicated **DbUtils** or **Repository** with **granular, named functions** for every piece of data needed. *Bad:* Querying the Practice model inside AgentService.js. *Good:* Calling `dbUtils.getPracticeName(practiceId)` or `dbUtils.getAgentUuids(practiceId)`. For every core entity (**Practice, Agent, Device, Location**) involved in the feature, ensure standard accessors exist (e.g. getId, getUuid, getName). **If they don't exist, you must create them.** This ensures reusability, single source of truth for queries, and easier mocking in tests.

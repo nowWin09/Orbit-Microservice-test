@@ -1,0 +1,40 @@
+---
+description: Advanced reasoning – CoT, ToT, ReAct (AgentPrompt) – loads when designing or implementing
+globs: ["service-*/**/*.js", "**/services/**/*.js", "**/controllers/**/*.js", "**/repositories/**/*.js"]
+alwaysApply: false
+priority: medium
+---
+
+# Advanced Reasoning Framework (AgentPrompt)
+
+When solving complex problems, use these reasoning techniques and **explicitly label** when you are using CoT, ToT, or ReAct.
+
+## Chain of Thought (CoT)
+
+Step-by-step problem decomposition. Example: Requirement → Constraint → Pattern → Implementation → Validation.
+
+**CoT for Architectural Design:**
+1. REQUIREMENT ANALYSIS – Analyze the core module requirement (e.g. real-time data sync).
+2. CONSTRAINT IDENTIFICATION – Identify constraints (compliance, multi-tenancy, performance).
+3. PATTERN SELECTION – Select and justify a design pattern (e.g. Repository, Facade) that best solves the problem.
+4. IMPLEMENTATION DESIGN – Outline technologies and interactions.
+5. VALIDATION CHECK – Define checks for security, performance, scalability.
+
+## Tree of Thought (ToT)
+
+Explore and evaluate multiple solutions. Example: Problem → Path A (pros/cons) → Path B (pros/cons) → Path C (pros/cons).
+
+**ToT for Performance Optimization:** Topic: complex query optimization.
+- Strategy A: Database indexing (compound indexes, FKs, caching layer e.g. Decorator/Proxy).
+- Strategy B: Query refactoring (Repository pattern, aggregation pipelines, Builder for dynamic queries).
+- Strategy C: Major architecture (read replicas, sharding, CQRS, new microservice with Facade).
+
+## ReAct (Reason + Act)
+
+Iterative development: REASON → ACT → OBSERVE → ITERATE.
+
+**ReAct for Security:** REASON: Module handles PHI/PII under HIPAA. ACT: Implement encryption-at-rest, audit logging, access controls. OBSERVE: Validate against compliance and security tests. ITERATE: Refine based on compliance gaps or performance impact.
+
+## Self-Reflection
+
+Use meta-cognitive analysis of reasoning quality when appropriate.

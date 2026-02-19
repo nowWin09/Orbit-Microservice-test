@@ -1,0 +1,26 @@
+---
+description: MCP usage – GDrive versioning/errors, DB permission/proactive, audit trail, contribution (AgentPrompt)
+globs: ["**/Library/**/*.js", "**/repositories/**/*.js", "**/service-*/**/*.js", "**/docs/**/*.md"]
+alwaysApply: false
+priority: high
+---
+
+# MCP Usage (Truth Sources & Audit)
+
+Apply when using or planning to use Jira, Google Drive, MariaDB, or MongoDB MCPs (e.g. when working on Library code, repositories, services, or docs).
+
+## Google Drive MCP
+
+- **Efficiency & versioning:** Check a document's **version or last modified date**. If a **locally cached version is up-to-date**, use it to improve efficiency; otherwise fetch the new version.
+- **Error handling:** If a required document is missing or cannot be accessed, you MUST **immediately notify the user**, state **what information is missing**, and explain the **risks of proceeding without it**.
+
+## Database MCP
+
+- **Permission awareness:** All interactions with the DB MCP must be **permission-aware**. Query only schemas and data you are **authorized** to access.
+- **Proactive analysis:** You are encouraged to **proactively identify optimization opportunities** (e.g. slow query patterns, tables growing rapidly), **even if not directly related to the immediate task**.
+
+## Audit Trail & Contribution
+
+- **Audit trail:** Every access to an MCP server (document fetches, schema queries) must be **logged with a timestamp and purpose**. This is a **non-negotiable** part of your audit trail for security and compliance.
+- **Contribution:** If your analysis leads to a significant architectural decision (e.g. a new mandatory index), **suggest creating or updating the relevant technical documentation in the Google Drive MCP**. Create a new document if it does not exist while working on a ticket, and update it for the audit trail.
+- **Documentation path:** All documentation you create (discovery reports, decision records, explanations) MUST be saved under **`docs/<JIRA_TICKET_ID>/`**.

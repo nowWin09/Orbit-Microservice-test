@@ -1,0 +1,172 @@
+---
+description: Core technology stack, validation, code style, and deployment (source: MicroServicePrompt)
+globs: ["**/controllers/**/*.js", "**/services/**/*.js", "**/routes/**/*.js", "**/consumers/**/*.js", "**/repositories/**/*.js", "pm2.json", "package.json", ".env.example"]
+alwaysApply: false
+priority: high
+---
+
+# Core Technology Stack
+
+## Stack
+
+- **Databases:** MariaDB (Relational), MongoDB (Analytics, Documents). **Caching:** Redis. **Messaging:** RabbitMQ. **Analytics:** Google BigQuery. **Scheduler:** `service-csiq-schedule`. **Event Bridge:** `service-csiq-event-bridge` (e.g. Firestore).
+
+## Joi Validation (Mandatory)
+
+All inputs (HTTP body/query, RabbitMQ/event messages, BigQuery insert payloads) MUST be validated with **Joi** before processing. Never rely on `if (data.field)` only. Protected routes MUST use established auth middleware.
+
+### RabbitMQ Consumer Validation (CRITICAL)
+
+**Every RabbitMQ consumer MUST validate incoming messages with Joi before processing.** This is non-negotiable for security and reliability.
+
+**Required Pattern:**
+```javascript
+const Joi = require('joi');
+
+// Define schema with strict validation
+const messageSchema = Joi.object({
+    parentCallId: Joi.string().required(),
+    attemptNumber: Joi.number().integer().min(1).required(),
+    retryConfig: Joi.object({
+        enabled: Joi.boolean().required(),
+        maxRetries: Joi.number().integer().min(1).max(20).required(),
+        retryInterval: Joi.number().integer().min(3).max(60).required(),
+        toAgents: Joi.array().items(Joi.object({
+            type: Joi.string().valid('AGENT', 'EXTERNAL_NUMBER', 'PHONE_NUMBER').required(),
+            uuid: Joi.string().when('type', {
+                is: Joi.string().valid('AGENT', 'EXTERNAL_NUMBER'),
+                then: Joi.required(),
+                otherwise: Joi.optional()
+            }),
+            phoneNumber: Joi.string().when('type', {
+                is: 'PHONE_NUMBER',
+                then: Joi.required(),
+                otherwise: Joi.optional()
+            })
+        })).required()
+    }).required(),
+    eventType: Joi.string().valid('VOICEMAIL_RETRY').required()
+}).strict(); // CRITICAL: Reject unknown fields
+
+// In consumer
+channel.consume(queueName, async (msg) => {
+    try {
+        const rawPayload = JSON.parse(msg.content.toString());
+        
+        // VALIDATE BEFORE PROCESSING
+        const { error, value } = messageSchema.validate(rawPayload);
+        if (error) {
+            console.error('[Consumer] Invalid payload:', error.details);
+            channel.nack(msg, false, false); // Reject (don't requeue invalid payloads)
+            return;
+        }
+        
+        // Process validated payload
+        await processMessage(value);
+        channel.ack(msg);
+    } catch (err) {
+        console.error('[Consumer] Error:', err);
+        channel.nack(msg, false, true); // Requeue on processing errors
+    }
+});
+```
+
+**Key Requirements:**
+- Use `.strict()` or `.unknown(false)` to reject unknown fields
+- Use `.abortEarly: false` to get all validation errors
+- Reject invalid messages (don't requeue) to prevent poison messages
+- Log validation errors for debugging
+- Use conditional validation (`.when()`) for type-dependent fields
+
+**Pre-Implementation Checklist:**
+- [ ] Define Joi schema for message payload
+- [ ] Use `.strict()` to reject unknown fields
+- [ ] Validate before any processing logic
+- [ ] Reject invalid messages (don't requeue)
+- [ ] Test with invalid payloads to verify rejection
+
+**Related:** CSIQ-15063 (Missing Joi validation in retry consumer)
+
+## Code & Style
+
+- **Language:** JavaScript (ES6+). Use `const`/`let`; no `var`.
+- **Linting:** All code MUST pass `.eslintrc.json`.
+- **Error handling:** `try/catch` for all `await` and external API calls.
+- **Logging:** Use established logger (e.g. `utils/logger.js`) for significant events and errors.
+- **JSDoc:** Mandatory for new functions, classes, and complex logic (parameters, return values, purpose).
+
+## Dependencies & Deployment
+
+- **Constants check:** Before adding inline values (queue names, exchange names, routing keys), check `Library/Common/Contants.js` for existing patterns. Add new entries following the same structure.
+- **No new npm packages** without explicit user approval. Use existing shared `Library/` for DB, queue, cache.
+- **PM2:** `pm2.json` is the single source of truth. New services MUST have an entry in the `apps` array. Env changes MUST be documented and reflected in that service’s `env` block in `pm2.json`.
+- **README / .env.example:** If you add new env vars, update `README.md` or `.env.example` for that service.
+
+## Observability
+
+Embed metric collection and verbose logging per PRD; ensure observability across MariaDB/MongoDB; provide tracing for debugging and compliance (e.g. Grafana).
+
+---
+
+## RabbitMQ Queue: appointment_bigquery_queue
+
+**Purpose:** Stream appointment IDs from patient-appointment-linking to BigQuery for analytics and CSV export
+
+**Producer:** service-csiq-patient-appointment-linking
+- Produces when NEW appointments are detected (duplicate prevention)
+- Only sends appointments not already in conversation history
+
+**Consumer:** service-csiq-appointment-bigquery
+- Validates with Joi (Number→String type coercion)
+- Inserts into practice-scoped BigQuery tables
+- Requeue strategy: max 5 attempts
+- Dead letter on exceptions + Google Space alerts
+
+**Payload Schema:**
+```json
+{
+  "callId": "string (required)",
+  "appointmentIds": ["string array (required, min 1)"],
+  "practiceId": "string|number (required, coerced to string)",
+  "requeueCount": "number (optional, tracking)"
+}
+```
+
+**BigQuery Tables:** `csiq_table_appointment_{practiceId}`
+
+**HIPAA Note:** appointmentIds are PHI - logs only count, not actual IDs
+
+**Related:** CSIQ-13534, CSIQ-10809 (parent feature)
+
+---
+
+## Joi Validation Pattern: Pre-Validation Type Coercion
+
+**Use Case:** When source and destination systems have type mismatches
+
+**Pattern:**
+```javascript
+// Pre-process data BEFORE Joi validation
+if (data && data.fieldArray && Array.isArray(data.fieldArray)) {
+    data.fieldArray = data.fieldArray
+        .filter(item => item != null && item !== undefined)
+        .map(item => String(item).trim())
+        .filter(item => item !== '');
+}
+
+// Then validate with Joi
+const schema = Joi.object({
+    fieldArray: Joi.array().items(Joi.string().trim().min(1)).min(1).required()
+}).unknown(false);  // Always use strict mode
+
+const { error, value } = schema.validate(data, { abortEarly: false });
+```
+
+**Example:** service-csiq-appointment-bigquery/lib/validate.js
+- MongoDB stores appointmentId as `Number`
+- BigQuery expects `STRING[]`
+- Solution: Pre-validation coercion (Number → String)
+
+**Security:** Always use `.unknown(false)` for strict validation
+
+**Related:** CSIQ-13534

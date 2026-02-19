@@ -1,0 +1,46 @@
+---
+description: Cross-service context, RabbitMQ producer-consumer mapping, and truth-source anti-hallucination
+globs: ["**/Library/RabbitMQ/**/*.js", "**/service-*/**/*.js", "**/*consumer*.js", "**/*producer*.js", ".env.example", "pm2.json"]
+alwaysApply: false
+priority: critical
+---
+
+# Cross-Service & Message Flow (70+ Services)
+
+This repo has **70+ microservices**. The AI must not treat each service as an island. RabbitMQ decouples services; you must act as the **bridge** and use **truth sources** (MCPs) to avoid hallucination.
+
+## 1. Triple-Check Context Protocol (Mandatory for Cross-Service / RabbitMQ)
+
+Before generating or changing **any** cross-service logic (especially RabbitMQ producers/consumers), you MUST:
+
+1. **Query Jira / Google Drive MCP** – Retrieve the specific PRD or ticket link for the task. Understand the **intended business flow** and **data contract**. Do not assume payload shape from ticket text alone; use the PRD or linked docs.
+
+2. **Query Database MCPs** – Fetch the **latest schemas** from MongoDB and MariaDB for any entities involved in the message payload. Ensure the message payload matches the **actual source-of-truth** data structures. Never guess field names.
+
+3. **Cross-Service Trace** – Search the codebase for the **Routing Key** or **Exchange Name** used by the producer. Find the **corresponding consumer** (and queue bindings) in other services. Do **not** assume the payload structure; verify it against the consumer’s parsing/validation (e.g. Joi schema, DTO usage).
+
+## 2. Bridging the "RabbitMQ Gap"
+
+Because RabbitMQ decouples producers from consumers, you must explicitly bridge them:
+
+- **If editing a Producer:** Proactively find the consumer service(s) for that exchange/routing key. Check the consumer’s validation (Joi, DTOs, or similar) and ensure the producer’s payload is **compatible**. Document the contract (e.g. in a comment or shared schema).
+
+- **If editing a Consumer:** Verify **exchange/queue bindings** against infrastructure (e.g. `.env.example`, queue names in `Library/RabbitMQ/`, or any Docker/Compose/Terraform config in the repo). Ensure the consumer subscribes to the same exchange/queue the producer uses.
+
+## 3. Reduce Hallucinations via Truth Sources
+
+- **Schema Over Guessing:** Never invent a database or message field name. If unsure, use the **Database MCP** (MariaDB / MongoDB) to query the live schema. If the MCP is unavailable, state so and ask the user for the schema before writing queries or payloads.
+
+- **Service Map First:** Use **`.cursor/rules/generated/service_map.mdc`** to identify which services exist and their entry points before searching for producer/consumer pairs. The service map lists all 62 active services from `pm2.json`, preventing hallucination about non-existent services.
+
+- **Architecture Awareness:** With 70+ services there is a lot of boilerplate. Prioritize files in the **same domain** (e.g. same `service-*` or same queue family) and **Library/RabbitMQ** before copying from unrelated service templates. Prefer existing producer/consumer pairs as the source of truth for payload shape.
+
+- **Jira/GDrive for Contracts:** Use the **Jira MCP** for ticket link, comments, sub-comments, and PRD links. Use the **Google Drive MCP** to access the PRD. Let these define the intended flow and contract; code must align to them.
+
+## 4. When to Apply This Rule
+
+- Any change touching **RabbitMQ** (producer, consumer, exchange, queue, routing key).
+- Any change that **sends or receives messages** between services.
+- Any task where the ticket or PRD mentions **event flow**, **data contract**, or **cross-service** behavior.
+
+Route: `.cursor/rules/cross_service.mdc` and the message-flow skill (`.cursor/skills/message-flow/`) for full message-flow analysis.

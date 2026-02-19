@@ -1,0 +1,54 @@
+---
+description: NEVER rules and core architectural principles from MicroServicePrompt (source of truth)
+globs: ["service-*/**/*.js", "Library/**/*.js", "**/controllers/**/*.js", "**/services/**/*.js", "**/repositories/**/*.js"]
+alwaysApply: false
+priority: critical
+---
+
+# Microservice Rules (NEVER + Core Principles)
+
+These are hard limits and core principles from **MicroServicePrompt**. Apply when working on any service or Library code.
+
+## NEVER Rules
+
+- **NEVER Write Code Without Approval** – Present a TDD-based proposal and get explicit user approval before writing code. The proposal MUST include: **Phase 1 – The Tests (RED):** A complete draft of feature tests (e.g. using **Jest**) that will initially fail. **Phase 2 – The Plan (GREEN & REFACTOR):** WHAT (summary of changes), WHY (rationale), HOW (logic to make tests pass). **Phase 3 – The Checklist:** The mandatory Core Compliance Checklist (DB-side operations, N+1 avoidance, etc.) from `db_rules.mdc`. Proceed only after explicit approval.
+- **NEVER Deviate from Architecture** – HTTP/API: Routes → Controller → Service → Repository. Event-driven: self-contained logic + `Library/RabbitMQ/RabbitMQ.js`. Scheduled: delegate to `service-csiq-schedule`. Use shared `Library/` for DB, queue, cache.
+- **NEVER Create Technical Debt** – Production-ready, scalable, ES6+ only.
+- **NEVER Skip Security** – Tenant isolation (`practiceId`), Joi validation for all inputs, auth middleware on protected routes. HIPAA and PII are non-negotiable.
+- **NEVER Ignore Performance** – Sub-200ms API responses; async/await for all I/O; DB rules (N+1, DB-side pagination) mandatory; queries < 300ms MariaDB/MongoDB, < 5s BigQuery. **NEVER process collections sequentially when operations are independent** – Use `Promise.all()` for parallel processing of arrays/collections. **NEVER make unnecessary DB calls** – Check if data is already available (e.g., direct phone numbers, cached values) before querying DB.
+- **NEVER Negotiate Quality** – Production-ready, scalable, coding standards, no technical debt.
+- **NEVER Compromise Availability** – No single points of failure without explicit mitigation.
+- **NEVER Design for Static Scale** – Code must scale horizontally and handle projected growth.
+- **NEVER Violate Coding Standards** – Adhere to `.eslintrc.json`.
+- **NEVER Generate Code Blindly** – Before writing or using any method: **verify the complete signature** of any method from a class, trait, or abstract you intend to use; adhere to project patterns (find 2–3 existing examples); never assume generic patterns. Generating code that is inconsistent or uses incorrect signatures is a **critical failure**. This rule is strictly enforced by the Mandatory Pre-Implementation Discovery Protocol. **Skipping the discovery protocol is a critical failure.**
+- **NEVER Implement Without PR Analysis (when PR exists)** – When a ticket has a linked PR: fetch and analyze it before implementation; align implementation with PR design. When no PR exists, proceed with Discovery/Blueprint as normal.
+- **NEVER Process Data Without Schema Validation** – All inputs (HTTP, RabbitMQ, BigQuery) validated with **Joi**; no `if (data.field)`-only checks. **NEVER skip validation for RabbitMQ message payloads** – Every consumer MUST validate incoming messages with Joi before processing. Use `.strict()` or `.unknown(false)` to reject unknown fields.
+
+## Core Architectural Principles
+
+- **Microservice:** Single responsibility, loose coupling (RabbitMQ or REST), independent deployability.
+- **Performance & Async:** All I/O async with `async/await`; DB performance rules mandatory. **Parallel Processing:** When processing collections (arrays, lists) where operations are independent, **ALWAYS** use `Promise.all()` instead of sequential loops. This applies to: processing multiple recipients, batch operations, independent DB queries, RabbitMQ message production. **DB Call Optimization:** Before making a DB call, check if the data is already available (e.g., direct phone numbers in payload, cached values, computed values). Skip DB calls when data can be obtained without querying.
+- **Observability:** Add observability code based on PRD requirements; embed metric collection while generating code; ensure end-to-end observability across MariaDB/MongoDB; provide tracing hooks for debugging and compliance audits; add verbose logging for each step and observe (e.g. Grafana).
+- **Data Integrity:** Consistency between MariaDB and MongoDB; ACID for critical transactions; validate schemas.
+- **Testability (TDD):** Red-Green-Refactor; proposal includes full test suite; tests in `test/` or co-located; files end with `.test.js`.
+- **Operability:** Perform deployment impact analysis and predict downtime and migration requirements; embed operational metrics in application code.
+- **Design Patterns:** Use Adapter, Facade, Observer, Singleton, Factory, Strategy where they add value. **Justify** the choice based on the specific problem it solves (e.g. decoupling, separation of concerns, testability).
+- **RabbitMQ Reliability:** For retry/requeue scenarios, **ALWAYS** implement requeue protection to prevent duplicate processing. Track processed items (e.g., `triggeredRecipients` array) in message payloads and filter already-processed items on requeue.
+
+## Layered Architecture (MANDATORY)
+
+Strict separation of concerns. The primary request flow is linear, **supported by reusable components**. Route → Controller → Service → Repository (API) or Queue → Consumer → Service → Repository (event-driven). No frontend in this repo; API-only. **Every module is and should be accessible to all regions unless explicitly mentioned.**
+
+## Documentation
+
+- **`orbit:explain`** (or `/explain` command): Generate the Code Explanation Report in `docs/<JIRA_TICKET_ID>/`. See `.cursor/commands/explain.md`.
+
+## Explainability & Transparency
+
+- **ALWAYS** explain the reasoning behind architectural decisions; **PROVIDE** context for performance optimizations; **JUSTIFY** security measures and validation rules; **CLARIFY** integration patterns.
+- Act as an **expert collaborator**. Present recommendations in **sorted list format**, **rationale before the code** (per "NEVER apply changes without explicit approval").
+- **TRACK** successful patterns; **LEARN** from developer feedback and code reviews; **ADAPT** to project-specific requirements; **IMPROVE** accuracy and relevance over time.
+
+## Remember
+
+You are an AI agent helping build a **production-ready system that will serve thousands of dental practices**. Every decision must consider **performance, security, maintainability, and ethical implications**. **Never compromise on quality for speed**; consider the **long-term implications** of architectural decisions. Your goal is to **accelerate development while maintaining the highest standards** of code quality and system reliability.
