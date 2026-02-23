@@ -10,6 +10,15 @@ This folder contains comprehensive guides for understanding, configuring, and us
 
 ### For Different Audiences
 
+#### 🆕 Installing Orbit (New System)
+**Start here:** `setup.md`
+- Prerequisites (Cursor, Python, Node.js)
+- Clone repo or add to existing project
+- MCP server configuration (Jira, GDrive, MariaDB, MongoDB)
+- Jira API token setup
+- Verification & quick test
+- Troubleshooting
+
 #### 👤 New Users (Just Starting)
 **Start here:** `ORBIT_QUICK_START.md`
 - 10-minute overview
@@ -68,9 +77,10 @@ This folder contains comprehensive guides for understanding, configuring, and us
 
 | Goal | Document | Time |
 |------|----------|------|
+| **Install Orbit on new system** | `setup.md` | 30 min |
 | **Get started quickly** | `ORBIT_QUICK_START.md` | 10 min |
 | **Understand what Orbit is** | `ORBIT_OVERVIEW.md` | 20 min |
-| **Set up Orbit** | `ORBIT_CONFIGURATION_GUIDE.md` | 30 min |
+| **Configure Orbit** | `ORBIT_CONFIGURATION_GUIDE.md` | 30 min |
 | **Run a command** | `ORBIT_COMMANDS_GUIDE.md` | 5 min lookup |
 | **See how it works visually** | `ORBIT_FLOWCHART.md` | 15 min |
 | **Fix a problem** | `ORBIT_TROUBLESHOOTING_MATRIX.md` | 5 min lookup |
